@@ -61,18 +61,14 @@ jobs:
         echo "Makefile Name: ${{ github.event.inputs.MAKEFILE_NAME }}"
         echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
         echo "::endgroup::"
+    # You might want to Checkout your repo first, but not mandatory
+    - name: Check Out
+      uses: actions/checkout@v4
 
-- name: Check disk usage before cleanup
-  run: |
-    df -h
-    du -h /home/runner | sort -rh | head -n 20
-- name: Cleanup
-  uses: rokibhasansagar/slimhub_actions@main
-- name: Check disk usage after cleanup
-  run: |
-    df -h
-    du -h /home/runner | sort -rh | head -n 20
-
+    # Cleanup The Actions Workspace Using Custom Composite Run Actions
+    - name: Cleanup
+      uses: rokibhasansagar/slimhub_actions@main
+      # That's it! Now use your normal steps
     - name: Prepare the environment
       run: |
         sudo apt update && sudo apt upgrade -y
