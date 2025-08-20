@@ -57,7 +57,7 @@ jobs:
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
       with:
-        cleanup-level: aggressive # Уточните в README, если требуется другой параметр
+        cleanup-level: aggressive # Проверьте README на https://github.com/rokibhasansagar/slimhub_actions
 
     - name: Enhanced cleanup
       run: |
@@ -112,9 +112,22 @@ jobs:
         repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
       id: pwd
 
+    - name: Check disk usage before repo sync
+      run: |
+        df -h
+        du -h /home/runner | sort -rh | head -n 20
+      working-directory: workspace
+
     - name: Repo Sync
       run: |
-        repo sync -q -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags
+        repo sync -q -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --prune
+      working-directory: workspace
+      continue-on-error: true
+
+    - name: Check disk usage after repo sync
+      run: |
+        df -h
+        du -h /home/runner | sort -rh | head -n 20
       working-directory: workspace
 
     - name: Clone device tree
@@ -139,8 +152,28 @@ jobs:
     - name: Sync Device Dependencies
       run: |
         bash ${GITHUB_WORKSPACE}/scripts/convert.sh ${{ github.event.inputs.DEVICE_PATH }}/${{ steps.buildtree.outputs.value }}.dependencies || echo "Dependencies script failed, continuing..."
-        repo sync -q -c -j$(nproc --all) --no-clone-bundle --no-tags
+        repo sync -q -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --prune
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      continue-on-error: true
+
+    - name: Check platform/prebuilts/rust
+      run: |
+        if [ -d "platform/prebuilts/rust" ]; then
+          echo "platform/prebuilts/rust exists, checking status..."
+          cd platform/prebuilts/rust
+          git status || echo "Git status failed for platform/prebuilts/rust"
+        else
+          echo "platform/prebuilts/rust not found, check manifest"
+        fi
+      working-directory: workspace
+      continue-on-error: true
+
+    - name: Clean up after sync
+      run: |
+        rm -rf workspace/.repo/repo
+        find workspace -type d -name ".git" -exec rm -rf {} +
+        df -h
+      working-directory: workspace
       continue-on-error: true
 
     - name: Upload repo
@@ -164,7 +197,7 @@ jobs:
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
       with:
-        cleanup-level: aggressive # Уточните в README, если требуется другой параметр
+        cleanup-level: aggressive # Проверьте README на https://github.com/rokibhasansagar/slimhub_actions
 
     - name: Enhanced cleanup
       run: |
@@ -182,6 +215,12 @@ jobs:
       with:
         name: repo-sync
         path: workspace
+
+    - name: Check disk usage after download
+      run: |
+        df -h
+        du -h /home/runner | sort -rh | head -n 20
+      working-directory: workspace
 
     - name: Prepare the environment
       run: |
@@ -220,6 +259,13 @@ jobs:
         lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng
         make clean
         make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+      continue-on-error: true
+
+    - name: Check disk usage after build
+      run: |
+        df -h
+        du -h /home/runner | sort -rh | head -n 20
+      working-directory: workspace
       continue-on-error: true
 
     - name: Upload to Release
