@@ -43,43 +43,44 @@ on:
         default: 'recovery'
 
 jobs:
-  sync:
+  build:
+    if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
+    - name: Display Run Parameters
+      run: |
+        echo "::group::User Environment Variables"
+        echo "Manifest URL: ${{ github.event.inputs.MANIFEST_URL }}"
+        echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
+        echo "Device Tree URL: ${{ github.event.inputs.DEVICE_TREE_URL }}"
+        echo "Device Tree Branch: ${{ github.event.inputs.DEVICE_TREE_BRANCH }}"
+        echo "Device Path: ${{ github.event.inputs.DEVICE_PATH }}"
+        echo "Device Name: ${{ github.event.inputs.DEVICE_NAME }}"
+        echo "Makefile Name: ${{ github.event.inputs.MAKEFILE_NAME }}"
+        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
+        echo "::endgroup::"
+
+    # You might want to Checkout your repo first, but not mandatory
     - name: Check Out
       uses: actions/checkout@v4
 
-    - name: Check disk usage before cleanup
-      run: |
-        df -h
-        du -h /home/runner | sort -rh | head -n 20
-
+    # Cleanup The Actions Workspace Using Custom Composite Run Actions
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
-      with:
-        cleanup-level: aggressive # Проверьте README на https://github.com/rokibhasansagar/slimhub_actions
-
-    - name: Enhanced cleanup
-      run: |
-        rm -rf /home/runner/actions-runner/cached/*
-        rm -rf /home/runner/actions-runner/cached/_diag/*.log
-        rm -rf workspace
-        sudo apt-get clean
-        docker system prune -a -f
-        journalctl --vacuum-size=1M
-        df -h
-      continue-on-error: true
+      # That's it! Now use your normal steps
 
     - name: Prepare the environment
       run: |
         sudo apt update && sudo apt upgrade -y
         DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
-          linux-modules-extra-$(uname -r) \
-          gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
-          libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
-          xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
-          build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
-          imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
+            linux-modules-extra-$(uname -r) \
+            gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
+            libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
+            xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
+            build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
+            imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
 
     - name: Install OpenJDK
       uses: actions/setup-java@v4
@@ -93,7 +94,8 @@ jobs:
           startsWith(github.event.inputs.COMMON_TREE_URL, 'git@github.com') }}
       uses: webfactory/ssh-agent@v0.9.0
       with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
 
     - name: Install repo
       run: |
@@ -112,22 +114,9 @@ jobs:
         repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
       id: pwd
 
-    - name: Check disk usage before repo sync
-      run: |
-        df -h
-        du -h /home/runner | sort -rh | head -n 20
-      working-directory: workspace
-
     - name: Repo Sync
       run: |
-        repo sync -q -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --prune
-      working-directory: workspace
-      continue-on-error: true
-
-    - name: Check disk usage after repo sync
-      run: |
-        df -h
-        du -h /home/runner | sort -rh | head -n 20
+        repo sync -j$(nproc --all) --force-sync
       working-directory: workspace
 
     - name: Clone device tree
@@ -136,7 +125,9 @@ jobs:
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone common tree
-      if: ${{ github.event.inputs.COMMON_TREE_URL != '' && github.event.inputs.COMMON_PATH != '' }}
+      if: |
+        github.event.inputs.COMMON_TREE_URL != null
+        && github.event.inputs.COMMON_PATH != null
       run: |
         git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
@@ -151,100 +142,10 @@ jobs:
 
     - name: Sync Device Dependencies
       run: |
-        bash ${GITHUB_WORKSPACE}/scripts/convert.sh ${{ github.event.inputs.DEVICE_PATH }}/${{ steps.buildtree.outputs.value }}.dependencies || echo "Dependencies script failed, continuing..."
-        repo sync -q -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --prune
+        bash ${GITHUB_WORKSPACE}/scripts/convert.sh ${{ github.event.inputs.DEVICE_PATH }}/${{ steps.buildtree.outputs.value }}.dependencies
+        repo sync -j$(nproc --all)
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       continue-on-error: true
-
-    - name: Check platform/prebuilts/rust
-      run: |
-        if [ -d "platform/prebuilts/rust" ]; then
-          echo "platform/prebuilts/rust exists, checking status..."
-          cd platform/prebuilts/rust
-          git status || echo "Git status failed for platform/prebuilts/rust"
-        else
-          echo "platform/prebuilts/rust not found, check manifest"
-        fi
-      working-directory: workspace
-      continue-on-error: true
-
-    - name: Clean up after sync
-      run: |
-        rm -rf workspace/.repo/repo
-        find workspace -type d -name ".git" -exec rm -rf {} +
-        df -h
-      working-directory: workspace
-      continue-on-error: true
-
-    - name: Upload repo
-      uses: actions/upload-artifact@v4
-      with:
-        name: repo-sync
-        path: workspace
-        retention-days: 1
-
-  build:
-    runs-on: ubuntu-24.04
-    needs: sync
-    permissions:
-      contents: write
-    steps:
-    - name: Check disk usage before cleanup
-      run: |
-        df -h
-        du -h /home/runner | sort -rh | head -n 20
-
-    - name: Cleanup
-      uses: rokibhasansagar/slimhub_actions@main
-      with:
-        cleanup-level: aggressive # Проверьте README на https://github.com/rokibhasansagar/slimhub_actions
-
-    - name: Enhanced cleanup
-      run: |
-        rm -rf /home/runner/actions-runner/cached/*
-        rm -rf /home/runner/actions-runner/cached/_diag/*.log
-        rm -rf workspace
-        sudo apt-get clean
-        docker system prune -a -f
-        journalctl --vacuum-size=1M
-        df -h
-      continue-on-error: true
-
-    - name: Download repo
-      uses: actions/download-artifact@v4
-      with:
-        name: repo-sync
-        path: workspace
-
-    - name: Check disk usage after download
-      run: |
-        df -h
-        du -h /home/runner | sort -rh | head -n 20
-      working-directory: workspace
-
-    - name: Prepare the environment
-      run: |
-        sudo apt update && sudo apt upgrade -y
-        DEBIAN_FRONTEND=noninteractive sudo apt install -yq \
-          linux-modules-extra-$(uname -r) \
-          gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib \
-          libc6-dev lib32ncurses-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils \
-          xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev \
-          build-essential libgtk-3-dev libglu1-mesa-dev freeglut3-dev git libxml2 lzop pngcrush schedtool squashfs-tools \
-          imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses6 python3 tar
-
-    - name: Install OpenJDK
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '11'
-
-    - name: Install repo
-      run: |
-        mkdir ~/bin
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
-        chmod a+x ~/bin/repo
-        sudo ln -sf ~/bin/repo /usr/bin/repo
 
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
@@ -253,20 +154,10 @@ jobs:
 
     - name: Building recovery
       run: |
-        cd workspace
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng
-        make clean
-        make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
-      continue-on-error: true
-
-    - name: Check disk usage after build
-      run: |
-        df -h
-        du -h /home/runner | sort -rh | head -n 20
-      working-directory: workspace
-      continue-on-error: true
+        lunch ${{ github.event.inputs.MAKEFILE_NAME }}-eng && make clean && make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
